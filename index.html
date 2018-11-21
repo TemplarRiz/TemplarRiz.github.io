@@ -1,0 +1,284 @@
+
+<!doctype html>
+
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+  <meta name="theme-color" content="#4F7DC9">
+  <meta charset="UTF-8">
+  <title>Distributed Training</title>
+  <script src="../../bower_components/webcomponentsjs/webcomponents-lite.js"></script>
+  <link rel="import" href="../../elements/codelab.html">
+  <link rel="stylesheet" href="//fonts.googleapis.com/css?family=Source+Code+Pro:400|Roboto:400,300,400italic,500,700|Roboto+Mono">
+  <style is="custom-style">
+    body {
+      font-family: "Roboto",sans-serif;
+      background: var(--google-codelab-background, #F8F9FA);
+    }
+  </style>
+  
+</head>
+<body unresolved class="fullbleed">
+
+  <google-codelab title="Distributed Training"
+                  environment="web"
+                  feedback-link="">
+    
+      <google-codelab-step label="Introduction" duration="0">
+        <h2>What is distributed training?</h2>
+<p>Distributed training is a form of data parallelism that is used to distribute the work flow when a model is trained using one or more gpus for its effective utilization. Distribution strategies available on tensorflow is a high level api that makes this possible with minimal modifications to the original code by keeping most of compatibility code in the back end thus enabling the user to add just a few lines of code to make their tensorflow model gpu compatible. There are multiple distribution strategies available in tensorflow and we will be looking at two of them in this codelab.</p>
+<h2>What you will need</h2>
+<p>A linux system with gpus. This codelab is using a google cloud platform instance with ubuntu OS, eight cpus and two gpus. Root privileges are necessary since some of the libraries that are installed later requires them. For the rest of this codelab, the instructions will be for a VM instance created in gcp, but they can </p>
+<h2>What you will learn</h2>
+<ul>
+<li>How to implement Mirrored Strategy for using multiple gpus in one machine.</li>
+<li>How to implement Tower Optimizer for the same.</li>
+<li>How to run cloud ml jobs using multiple machines containing gpus.</li>
+</ul>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Getting Setup" duration="0">
+        <h2>Create a gcp instance ( skip this if you are not using google cloud)</h2>
+<ol type="1" start="1">
+<li>Create an account in <a href="https://console.cloud.google.com/getting-started?angularJsUrl=%2Fgetting-started" target="_blank">google cloud platform</a>.</li>
+<li>Make a new project </li>
+<li>Create a VM instance with one or more gpus and a ubuntu disk.</li>
+</ol>
+<h2>Clone the github repository</h2>
+<p>You can either clone the github repository using,</p>
+<pre>git clone https://github.com/tensorflow/models.git</pre>
+<p>Or download the zip file using,</p>
+<pre>wget https://github.com/tensorflow/models/archive/master.zip</pre>
+<h2>Setting up the environment</h2>
+<p>There are a few requirements for running these models. Starting from scratch, they can be run by following these steps :</p>
+<ul>
+<li>Install python 2.7 and tensorflow-gpu 1.10 . This can be done using pip or anaconda. Since tensorflow runs faster when installed with anaconda, the rest of the article works with a conda environment. Ubuntu version used is 18.04</li>
+</ul>
+<pre>conda install -c anaconda tensorflow-gpu==1.10</pre>
+<ul>
+<li>Install CUDA by following the instructions given <a href="https://developer.nvidia.com/cuda-downloads?target_os=Linux&target_arch=x86_64&target_distro=Ubuntu&target_version=1604&target_type=runfilelocal" target="_blank">here</a>. When downloaded using wget there is a chance that the file name is ‘cuda_10.0.130_410.48_linux&#39; instead of ‘cuda_10.0.130_410.48_linux.run&#39; but it works all the same.</li>
+<li>Rest of the depencies can be installed with the following commands:</li>
+</ul>
+<pre>sudo apt-get update
+sudo apt-get install --no-install-recommends nvidia-384 libcuda1-384 nvidia-opencl-icd-384
+sudo reboot</pre>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Resnet model" duration="5">
+        <p>Deep residual networks or ResNets for short, are used for training very deep convolutional neural networks. It uses the idea of identity mapping in order to overcome the saturation of accuracy with increasing network depth. This model is present in the ‘official&#39; folder in the cloned repository.</p>
+<h2>Downloading the data</h2>
+<p>        There are two scripts for resnet available in the repository, one for cifar and the other for imagenet. Cifar data is easy to download and small but imagenet data is huge and takes time to download. The script that is recommended in the repository takes a very long time to download the data. It would be much faster to download the raw data, unzip them and then use the script to convert to tf_record files. The data can be downloaded from the <a href="http://academictorrents.com/browse.php?search=imagenet" target="_blank">academic torrents website</a>. Download the torrents for <a href="http://academictorrents.com/details/a306397ccf9c2ead27155983c254227c0fd938e2" target="_blank">training</a> and <a href="http://academictorrents.com/details/5d6d0df7ed81efd49ca99ea4737e0ae5e3a5f2e5" target="_blank">validation</a> using wget and then use: ctorrent [torrent link] ,to download the dataset. Ctorrent can be downloaded using,</p>
+<pre> sudo apt-get install ctorrent</pre>
+<p> Unzip the files using the instructions given <a href="https://github.com/tensorflow/tpu/tree/master/tools/datasets#imagenet_to_gcspy" target="_blank">here</a> and run the imagenet_to_gcs.py script using the <em>--nogcs_upload</em> flag with suitable local directory. For example,</p>
+<pre>python imagenet_to_gcs.py \
+  --raw_data_dir=./Raw_data \
+  --local_scratch_dir=./Data_directory \
+  --nogcs_upload</pre>
+<p>This creates two folders - ‘<em>train</em>&#39; and ‘<em>test</em>&#39;- in this directory and in them creates 1024 and 128 tf records respectively. Once the conversion is done, move all the tf_record files into one folder and this will be the ‘<em>data_dir</em>&#39; flag argument for the imagenet_main.py script.</p>
+<h2>About the model</h2>
+<p>There are two versions of the resnet script available, one for cifar10 data and the other for imagenet data. This codelab will be focusing only on the imagenet model.The imagenet_main.py script takes a multitude of flags for different purposes. The ones that are used in this codelab are explained below.</p>
+<ul>
+<li>data_dir : is the directory containing the tf records, both training and validation.</li>
+<li>num_gpus : refers to the number of available gpus.</li>
+<li>model_dir : is the directory into which the checkpoints, summary, etc are written.</li>
+<li>resnet_size : refers to a set of possible block layer sizes. Available options are 18,34,50,101,152 and 200.</li>
+<li>stop_threshold : If the evaluation accuracy comes out to be greater than or equal to this value, the model stops training.</li>
+</ul>
+<aside class="special"><p>Both training and validation must be in the same folder for them to be used by imagenet_main.py. Therefore it is imperative that the train and test tf_record files created using the script imagenet_to_gcs.py be kept in a should be moved to a single folder.</p>
+</aside>
+<h2>Pretrained models</h2>
+<p>Pre-trained models are available for Resnet-50 model for versions 1.5 and 2 for floating point 16 and 32. These models have around 76 to 77 percent accuracy. These can also be used for transfer learning by fine tuning the final layer after freezing the remaining layers. For a detailed explanation of these pretrained models refer to the readme file.</p>
+<aside class="warning"><p>GPUs are essential for training resnet model on imagenet data since the data size is enormous and the training is very slow even when run on 16 cpus. Comparatively, the cifar 10 data is much smaller and can be trained on cpus in a reasonable time.</p>
+</aside>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Running resnet model on GPUs" duration="0">
+        <p>The resnet model has two distribution strategies available by default,</p>
+<ul>
+<li>One Device Strategy - for using a single gpu.</li>
+<li>Mirrored Strategy - for using multiple gpus.</li>
+</ul>
+<p>The default distribution strategies are defined in the distribution_utils.py script located in official/utils/misc folder. In this codelab we will be running the resnet model using the default Mirrored Strategy and another distribution strategy run using Tower Optimizer which requires a few modifications to the script.</p>
+<h2>Mirrored Strategy</h2>
+<p>In order to run this distribution strategy we need two or more gpus. We can execute this strategy by the following command :</p>
+<pre>python imagenet_main.py --data_dir $Data_directory \
+                        --model_dir $Model_directory \
+                        --num_gpus $Number_of_gpus \
+                        --train_epochs $Number_of_epochs</pre>
+<h2>Tower Optimizer</h2>
+<p>This is one of the older methods of running distributed training and is not one of the default options when running the resnet model. To use this optimizer, we need to make two modifications in the resnet_run_loops.py script. First wrap the optimizer with the tower optimizer after it had been defined with a momentum optimizer. Then wrap the model function with replicate model function when passing on to the estimator. The required code snippets are :</p>
+<ul>
+<li>Add <code>optimizer = tf.contrib.estimator.TowerOptimizer(optimizer)</code> after the optimizer definition in line 375.</li>
+<li>Replace the <code>model_fn=model_function</code> part in the estimator definition in line 488 with <code>model_fn=tf.contrib.estimator.replicate_model_fn(model_fn)</code> </li>
+</ul>
+<pre>python imagenet_main.py --data_dir $Data_directory \
+                        --model_dir $Model_directory \
+                        --train_epochs $Number_of_epochs</pre>
+<h2>The Tower Optimizer detects the number of gpus on its own, making it unnecessary to pass the num_gpus flag.</h2>
+<h2>Performance Analysis</h2>
+<p>For a fair comparison both strategies were run on two Nvidia Tesla P100 gpus. The main metrics for comparison are the throughput rate, the number of steps required to reach a threshold accuracy and gpu utilization.</p>
+<table>
+<tr><td colspan="1" rowspan="1"><p>Evaluation Metric</p>
+</td><td colspan="1" rowspan="1"><p>Mirrored Strategy</p>
+</td><td colspan="1" rowspan="1"><p>Tower Optimizer</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p>Throughput rate </p>
+<p>(images processed per second)</p>
+</td><td colspan="1" rowspan="1"><p>x</p>
+</td><td colspan="1" rowspan="1"><p>x</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p>Steps required to reach 73% accuracy</p>
+</td><td colspan="1" rowspan="1"><p>x</p>
+</td><td colspan="1" rowspan="1"><p>x</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p>Average GPU utilization</p>
+</td><td colspan="1" rowspan="1"><p>85%</p>
+</td><td colspan="1" rowspan="1"><p>95%</p>
+</td></tr>
+</table>
+<p>It is seen that even with an apparently lower gpu utilization, the tower optimizer is able to match Mirrored Strategy in throughput rate and speed of convergence.</p>
+<aside class="special"><p><strong>SOME EXTRA FACTS :-</strong></p>
+<ul>
+<li>The training data has about 1.2 million images. So, with a batch size of 32, there are 40,000 steps in one epoch.</li>
+<li>By default, the learning rate gets divided by 10 at 30, 60 and 90 epochs. But in this codelab we have divided it by 10 at 18 and 34 epochs. This was because the training started to plateau at these many epochs that there would be minimal progress if it were to be trained in the default way.</li>
+<li>There has to be a minimum of one epoch of training between two consecutive evaluations. This gap can be also be increased with the ‘epochs_between_evals&#39; flag.</li>
+</ul>
+</aside>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Transformer model" duration="5">
+        <p>Transformer is a neural network architecture that solves sequence to sequence problems using attention mechanisms. The attention mechanism learns dependencies between tokens in two sequences. Since attention weights apply to all tokens in the sequences, the Transformer model is able to easily capture long-distance dependencies.</p>
+<p>Transformer&#39;s overall structure follows the standard encoder-decoder pattern. The encoder uses self-attention to compute a representation of the input sequence. The decoder generates the output sequence one token at a time, taking the encoder output and previous decoder-outputted tokens as inputs.</p>
+<h2>Downloading the data</h2>
+<p><a href="https://github.com/tensorflow/models/blob/master/official/transformer/data_download.py" target="_blank">data_download.py</a> downloads and preprocesses the training and evaluation WMT datasets. After the data is downloaded and extracted, the training data is used to generate a vocabulary of sub-tokens. The evaluation and training strings are tokenized, and the resulting data is sharded, shuffled, and saved as TFRecords.</p>
+<p>1.75GB of compressed data will be downloaded. In total, the raw files (compressed, extracted, and combined files) take up 8.4GB of disk space. The resulting TFRecord and vocabulary files are 722MB. The script takes around 40 minutes to run, with the bulk of the time spent downloading and ~15 minutes spent on preprocessing.</p>
+<p>Command to run:</p>
+<pre> python data_download.py --data_dir=$DATA_DIR</pre>
+<p> Arguments:</p>
+<ul>
+<li>--data_dir: Path where the preprocessed TFRecord data, and vocab file will be saved.</li>
+<li>Use the --help or -h flag to get a full list of possible arguments</li>
+</ul>
+<h2>About the model</h2>
+<p>The main file carries out both training and evaluation using tensorflow High level API- Estimator. The transformer_main.py script takes a multitude of flags for different purposes. The ones that are used in this codelab are explained below.</p>
+<ul>
+<li>data_dir : is the directory containing the tf records, i.e. train data.</li>
+<li>num_gpus : refers to the number of available gpus.</li>
+<li>model_dir : is the directory into which the checkpoints, summary, etc are written.</li>
+<li>vocab_file: Path to sub-token vocabulary file. If data_download was used, you may find the file in data_dir.</li>
+<li>param_set: Parameter set to use when creating and training the model. Options are base and big</li>
+<li>bleu_source: Path to file containing text to translate</li>
+<li>bleu_ref: Path to file containing the reference translation</li>
+<li>stop_threshold: Train until the BLEU score reaches this lower bound</li>
+<li>train_epochs: The total number of complete passes to make through the dataset.</li>
+<li>train_steps: sets the total number of training steps to run.</li>
+</ul>
+<aside class="special"><p>At the beginning of each training session, the training dataset is reloaded and shuffled. Stopping the training before completing an epoch may result in worse model quality, due to the chance that some examples may be seen more than others. Therefore, it is recommended to use epochs instead of steps when the model quality is important.</p>
+</aside>
+<h2>Export trained model</h2>
+<p>To export the model as a Tensorflow <a href="https://www.tensorflow.org/guide/saved_model" target="_blank">SavedModel</a> format, use the argument --export_dir when running transformer_main.py. A folder will be created in the directory with the name as the timestamp (e.g. $EXPORT_DIR/1526427396).</p>
+<pre>EXPORT_DIR=$HOME/transformer/saved_model
+python transformer_main.py --data_dir=$DATA_DIR --model_dir=$MODEL_DIR \
+  --vocab_file=$VOCAB_FILE --param_set=$PARAM_SET --export_model=$EXPORT_DIR
+</pre>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Running transformer model on GPUs" duration="0">
+        <p>The transformer model has two distribution strategies available by default,</p>
+<ul>
+<li>One Device Strategy - for using a single gpu.</li>
+<li>Mirrored Strategy - for using multiple gpus.</li>
+</ul>
+<p>The default distribution strategies are defined in the distribution_utils.py script located in official/utils/misc folder. In this codelab we will be running the resnet model using the default Mirrored Strategy and another distribution strategy run using Tower Optimizer which requires a few modifications to the script.</p>
+<h2>Mirrored Strategy</h2>
+<p>In order to run this distribution strategy we need two or more gpus. We can execute this strategy by the following command :</p>
+<pre>python transformer_main.py --data_dir=$DATA_DIR --model_dir=$MODEL_DIR \
+    --vocab_file=$VOCAB_FILE --param_set=$PARAM_SET \
+    --bleu_source=test_data/newstest2014.en --bleu_ref=test_data/newstest2014.de</pre>
+<h2>Tower Optimizer</h2>
+<p>This is one of the older methods of running distributed training and is not one of the default options when running the transformer model. To use this optimizer, we need to make two modifications in the transformer_main.py script. First wrap the optimizer with the tower optimizer after it had been defined with a LazyAdam optimizer. Then wrap the model function with replicate model function when passing on to the estimator. The required code snippets are :</p>
+<ul>
+<li>Add <code>optimizer = tf.contrib.estimator.TowerOptimizer(optimizer)</code> after the optimizer definition in line 180.</li>
+<li>Replace the <code>model_fn=model_function</code> part in the estimator definition in construct_estimator function in line 499 with <code>model_fn=tf.contrib.estimator.replicate_model_fn(model_fn)</code> </li>
+</ul>
+<p>Another thing to keep in mind while using Tower Optimizer is that the static_batch flag should be passed as True since Tower Optimizer works only with batches of same length.</p>
+<pre>python transformer_main.py --data_dir=$DATA_DIR --model_dir=$MODEL_DIR \
+   --vocab_file=$VOCAB_FILE --param_set=$PARAM_SET \ --bleu_source=test_data/newstest2014.en --bleu_ref=test_data/newstest2014.de --static_batch True</pre>
+<h2>Performance Analysis</h2>
+<p>For a fair comparison both strategies were run on two Nvidia Tesla P100 gpus. The main metrics for comparison are the throughput rate, the number of steps required to reach a threshold accuracy and gpu utilization.</p>
+<table>
+<tr><td colspan="1" rowspan="1"><p>Evaluation Metric</p>
+</td><td colspan="1" rowspan="1"><p>Mirrored Strategy</p>
+</td><td colspan="1" rowspan="1"><p>Tower Optimizer</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p>Throughput rate </p>
+<p>(tokens processed per second)</p>
+</td><td colspan="1" rowspan="1"><p>x</p>
+</td><td colspan="1" rowspan="1"><p>x</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p>Bleu score achieved in 2 epochs(82,730 steps)</p>
+</td><td colspan="1" rowspan="1"><p>21.7</p>
+</td><td colspan="1" rowspan="1"><p>0.4</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p>Average GPU utilization</p>
+</td><td colspan="1" rowspan="1"><p>82%</p>
+</td><td colspan="1" rowspan="1"><p>96%</p>
+</td></tr>
+</table>
+<p>Tower Optimizer is unable to match the bleu score achieved by Mirrored Strategy primarily due to it using batches with fixed size which increases the number of padding tokens per batch and increases the training speed.</p>
+<aside class="special"><p><strong>SOME EXTRA FACTS :-</strong></p>
+<ul>
+<li>The training data has about 163 million tokens and about 41,365 batches per epoch for big parameter and 83,244 batches per epoch for base parameter.</li>
+<li>TPU support for this version of Transformer is experimental. Currently it is present for demonstration purposes only</li>
+</ul>
+</aside>
+<h3 class="faq">Frequently Asked Questions</h3>
+<ul class="faq">
+<li><a href="https://cloud.google.com/compute/pricing" target="_blank">How much will making a gpu instance on google cloud cost?</a></li>
+</ul>
+
+
+      </google-codelab-step>
+    
+  </google-codelab>
+
+  <script>
+    (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+    })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    ga('create', 'UA-49880327-14', 'auto');
+
+    (function() {
+      var gaCodelab = '';
+      if (gaCodelab) {
+        ga('create', gaCodelab, 'auto', {name: 'codelab'});
+      }
+
+      var gaView;
+      var parts = location.search.substring(1).split('&');
+      for (var i = 0; i < parts.length; i++) {
+        var param = parts[i].split('=');
+        if (param[0] === 'viewga') {
+          gaView = param[1];
+          break;
+        }
+      }
+      if (gaView && gaView !== gaCodelab) {
+        ga('create', gaView, 'auto', {name: 'view'});
+      }
+    })();
+  </script>
+
+</body>
+</html>

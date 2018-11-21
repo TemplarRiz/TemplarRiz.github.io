@@ -1,0 +1,22 @@
+{
+  "environment": "web",
+  "source": "1xq4wYl-3cChMZcsCClVPQ2rsgnTeP2viuzW7KlixVzc/edit#",
+  "format": "html",
+  "prefix": "../../",
+  "mainga": "UA-49880327-14",
+  "updated": "2018-11-20T13:50:04Z",
+  "id": "Distributed-training",
+  "duration": 10,
+  "title": "Distributed Training",
+  "author": "Quantiphi.Inc",
+  "summary": "This codelab will help you to learn how to implement distributed training in tensorflow",
+  "theme": "tensorflow",
+  "status": [
+    "draft"
+  ],
+  "category": [
+    "Tensorflow"
+  ],
+  "tags": [],
+  "url": "Distributed-training"
+}
